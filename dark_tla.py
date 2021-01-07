@@ -12,18 +12,18 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.special import erf
 
 def norm_compton_cooling_rate(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
-    """ Gamma_c where dlogT_DM/dt = Gamma_c (T_D - T_DM), in 1/s
+    """ Gamma_c where dlogT_DM/dt = Gamma_c (T_D/T_DM - 1), in 1/s
     """
     T_D = xi*phys.TCMB(rs)
     pre = 64 * np.pi**3 * alphaD**2 / 135 * T_D**4 * x_be/(1+x_be)
     mass = (1 + (m_be/m_bp)**3) / m_be**3
     return pre * mass / phys.hbar
 
-def compton_cooling_rate(xHII, T_m, rs):
-    """SM Compton cooling rate. dE/dVdt"""
-    ne = xHII * phys.nH*rs**3
+def compton_cooling_rate(xHII, Tb, rs):
+    """ Gamma_c where dlogT_DM/dt = Gamma_c (T_CMB/Tb - 1), in 1/s """
     pre = 4 * phys.thomson_xsec * 4 * phys.stefboltz / phys.me
-    return pre * (phys.TCMB(rs) - T_m) * phys.TCMB(rs)**4
+    denom = 3/2 * (1 + phys.chi + xHII)
+    return pre * xHII * phys.TCMB(rs)**4 / denom
 
 # See Eqns. (A.1) and (A.2) #
 # Reduced Mass #
@@ -414,7 +414,7 @@ def get_history(
         n_D  = phys.rho_DM/m_D * rs**3
         #n_D = phys.nH * rs**3 #To match the SM result
         T_D  = phys.TCMB(rs)*xi
-        def dlogTDM_dz(y_be, log_TDM, rs):
+        def dlogTDM_dz(log_TDM, y_be, log_Tb, yHII, rs):
             #rs = np.exp(logrs)
 
             T_DM = np.exp(log_TDM)
@@ -456,9 +456,9 @@ def get_history(
             return deriv
 
 
-        def dybe_dz(y_be, log_T, rs):
+        def dybe_dz(log_TDM, y_be, log_Tb, yHII, rs):
             #rs = np.exp(logrs)
-            T = np.exp(log_T)
+            T_DM = np.exp(log_TDM)
             x_be = get_x(y_be)
             xD = 1 - x_be
 
@@ -469,44 +469,80 @@ def get_history(
 
 
             peeb_C = dark_peebles_C(x_be, rs, alphaD, m_be, m_bp, xi)
-            alpha = dark_alpha_recomb(T, alphaD, m_be, m_bp, xi)
+            alpha = dark_alpha_recomb(T_DM, alphaD, m_be, m_bp, xi)
             beta = dark_beta_ion(T_D, alphaD, m_be, m_bp, xi)
             return 2 * np.cosh(y_be)**2 * phys.dtdz(rs) * (
                 - peeb_C * (alpha * x_be**2 * n_D 
-                    - 4 * beta * xD * np.exp(-Lya_D/T_D)
+                    - 4 * beta * xD * np.exp(-Lya_D/T_DM)
                     )
                 )
 
 
         nH = phys.nH*rs**3
-        def dlogTb_dz(yHII, log_Tb, rs):
-
+        def dlogTb_dz(log_TDM, y_be, log_Tb, yHII, rs):
             Tb = np.exp(log_Tb)
-
             xHII = get_x(yHII)
-            xHI = 1 - xHII
+            #if rs > 2e3:
+            #    xHII = phys.xe_Saha(rs, 'HI')
+            #elif rs<= 1:
+            #    xHII = phys.xHII_std(1)
+            #else:
+            #    xHII = phys.xHII_std(rs)
 
             adia = 2/rs
-            denom = 3/2 * Tb * nH * (1 + chi + xe)
-            comp = phys.dtdz(rs) * compton_cooling_rate(xHII, Tb, rs)/denom
+            comp = phys.dtdz(rs) * compton_cooling_rate(xHII, Tb, rs) * (phys.TCMB(rs)/Tb - 1)
 
-            return adia + comp
+            #print(rs, compton_cooling_rate(xHII, Tb, rs)/phys.hubble(rs))
+            if compton_cooling_rate(xHII, Tb, rs)/phys.hubble(rs) > 1e5:
+                return phys.dtdz(rs) * (phys.TCMB(rs)/Tb - 1)*100
+            else:
+                return adia + comp
+
+        def dyHII_dz(log_TDM, y_be, log_Tb, yHII, rs):
+            Tb = np.exp(log_Tb)
+            xHII = get_x(yHII)
+            ne = xHII * nH
+            xHI = 1 - xHII
+            T_CMB = phys.TCMB(rs)
 
 
-        log_TDM, y_be = var[0], var[1]
+            #if not helium_TLA and xHII(yHII) > 0.99 and rs > 1500:
+            #    # Use the Saha value. 
+            #    return 2 * np.cosh(yHII)**2 * phys.d_xe_Saha_dz(rs, 'HI')
 
-        if both_sectors:
-            return 0
-        else:
-            return np.array([dlogTDM_dz(y_be, log_TDM, rs), 
-                    dybe_dz(y_be, log_TDM, rs)])
+
+            recomb = phys.alpha_recomb(Tb, 'HI') * ne
+            ion = 4*phys.beta_ion(T_CMB, 'HI') * np.exp(-phys.lya_eng/T_CMB)
+
+
+            if rs>1500:
+            #if ion/recomb > 1e2:
+                return phys.d_xe_Saha_dz(rs, 'HI')
+            else:
+                return 2 * np.cosh(yHII)**2 * phys.dtdz(rs) * (
+                    - phys.peebles_C(xHII, rs) * (recomb*xHII - ion*xHI)
+                    )
+
+        log_TDM, y_be, log_Tb, yHII = var[0], var[1], var[2], var[3]
+
+        return np.array([
+            dlogTDM_dz(log_TDM, y_be, log_Tb, yHII, rs),
+            dybe_dz(log_TDM, y_be, log_Tb, yHII, rs),
+            dlogTb_dz(log_TDM, y_be, log_Tb, yHII, rs),
+            dyHII_dz(log_TDM, y_be, log_Tb, yHII, rs)
+        ])
 
 
     if init_cond is None:
         #rs_start = np.exp(logrs_vec[0])
         rs_start = rs_vec[0]
         x_Saha = x_be_Saha(rs_start, alphaD, m_be, m_bp, xi)
-        _init_cond = [xi*phys.TCMB(rs_start), x_Saha]
+        _init_cond = [
+            xi*phys.TCMB(rs_start), 
+            x_be_Saha(rs_start, alphaD, m_be, m_bp, xi),
+            phys.TCMB(rs_start),
+            phys.xe_Saha(rs_start, 'HI')
+        ]
 
     else:
 
@@ -514,9 +550,13 @@ def get_history(
 
         if init_cond[1] == 1:
             _init_cond[1] = 1 - 1e-12
+        if init_cond[3] == 1:
+            _init_cond[3] = 1 - 1e-12
 
     _init_cond[0] = np.log(_init_cond[0])
     _init_cond[1] = np.arctanh(2*(_init_cond[1] - 0.5))
+    _init_cond[2] = np.log(_init_cond[2])
+    _init_cond[3] = np.arctanh(2*(_init_cond[3] - 0.5))
     _init_cond = np.array(_init_cond)
 
     # Note: no reionization model implemented.
@@ -533,6 +573,8 @@ def get_history(
     # Convert from log_T_m to T_m
     soln[:,0] = np.exp(soln[:,0])
     soln[:,1] = 0.5 + 0.5*np.tanh(soln[:,1])
+    soln[:,2] = np.exp(soln[:,2])
+    soln[:,3] = 0.5 + 0.5*np.tanh(soln[:,3])
 
     return soln
 
