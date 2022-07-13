@@ -11,21 +11,34 @@ from scipy.misc import derivative
 from scipy.interpolate import RegularGridInterpolator
 from scipy.special import erf
 
-def norm_compton_cooling_rate(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
+def norm_compton_cooling_rate(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, thermalized_be_bH=True):
     """ Gamma_c where dlogT_DM/dt = Gamma_c (T_D/T_DM - 1), in 1/s
     """
     T_D = xi*phys.TCMB(rs)
-    pre = 64 * np.pi**3 * alphaD**2 / 135 * T_D**4 * x_be/(1+x_be)
+    if thermalized_be_bH:
+        CV_fac = x_be/(1+x_be)
+    else:
+        CV_fac = 1/2 #x_be/(2*x_be)
+    pre = 64 * np.pi**3 * alphaD**2 / 135 * T_D**4 * CV_fac
     mass = (1 + (m_be/m_bp)**3) / m_be**3
     return pre * mass / phys.hbar
 
 def compton_cooling_rate(xHII, Tb, rs):
-    """ Gamma_c where dlogT_DM/dt = Gamma_c (T_CMB/Tb - 1), in 1/s """
+    """ Gamma_c where dlogT_b/dt = Gamma_c (T_CMB/Tb - 1), in 1/s """
     pre = 4 * phys.thomson_xsec * 4 * phys.stefboltz / phys.me
     denom = 3/2 * (1 + phys.chi + xHII)
     return pre * xHII * phys.TCMB(rs)**4 / denom
 
-# See Eqns. (A.1) and (A.2) #
+def norm_be_bH_rate(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, thermalized_be_bH=True):
+    """ Gamma_be_bH where dlogT_bH/dt = Gammabe_bH (T_be/T_bH - 1), in 1/s
+    """
+    T_D = xi*phys.TCMB(rs)
+    CV_fac = 1/2 #x_be/(2*x_be)
+    pre = 64 * np.pi**3 * alphaD**2 / 135 * T_D**4 * CV_fac
+    mass = (1 + (m_be/m_bp)**3) / m_be**3
+    return pre * mass / phys.hbar
+
+# See Eqns. (A.1) and (A.2) of Cyr-Racine and Sigurdson #
 # Reduced Mass #
 def mu_D(alpha, B):
     return 2 * B/alpha**2
@@ -45,7 +58,7 @@ def get_me(mD, alpha, B):
 # Binding Energy of Hydrogenic atom #
 def get_BD(alphaD, m_be, m_bp):
     """ !!! Double-check """
-    mu_D = m_be * m_bp/(m_be + m_bp)
+    mu_D = m_be/(1 + m_be/m_bp)
     return 1/2*alphaD**2 * mu_D
 
 def dark_alpha_recomb(T_DM, alphaD, m_be, m_bp, xi):
@@ -217,13 +230,16 @@ def F_pr(x, y):
 
     return 10**interpfunc((np.log10(x), np.log10(y)))
 
-def Gam_pi(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
+def Gam_pi(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, thermalized_be_bH=True):
     B_D  = get_BD(alphaD, m_be, m_bp)
     T_D  = xi * phys.TCMB(rs)
     m_D  = m_be + m_bp - B_D
     mu_D = m_be*m_bp/m_D
     n_D  = phys.rho_DM/m_D * rs**3
-    denom = (3/2 * T_DM * n_D * (1+x_be))
+    if thermalized_be_bH:
+        denom = (3/2 * T_DM * n_D * (1+x_be))
+    else:
+        denom = (3/2 * T_DM * n_D * (2*x_be))
 
     # Calculate x_2s using Hyrec's steady stateassumption #
     Lya_D = 3/4 * B_D
@@ -242,20 +258,23 @@ def Gam_pi(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
     convert = phys.hbar
     return pre * x_2s*n_D * F_pi(T_D/B_D) / denom * convert
 
-def Gam_pr(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
+def Gam_pr(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, thermalized_be_bH=True):
     B_D = get_BD(alphaD, m_be, m_bp)
     T_D = xi * phys.TCMB(rs)
     m_D = m_be + m_bp - B_D
     mu_D = m_be*m_bp/m_D
     n_D = phys.rho_DM/m_D * rs**3
-    denom = (3/2 * T_DM * n_D * (1+x_be))
+    if thermalized_be_bH:
+        denom = (3/2 * T_DM * n_D * (1+x_be))
+    else:
+        denom = (3/2 * T_DM * n_D * (2*x_be))
 
     pre = 2*alphaD**3*np.sqrt(2*np.pi*T_DM)/(3*mu_D**(3/2))
     convert = (phys.hbar * phys.c)**3/phys.hbar
 
     return pre * x_be**2*n_D**2 * F_pr(T_D/B_D, T_DM/T_D) / denom * convert
 
-def Gam_ff(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
+def Gam_ff(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, thermalized_be_bH):
     """ free-free absorption - emission (brem) / T_DM in 1/s """
     B_D = get_BD(alphaD, m_be, m_bp)
     T_D = xi * phys.TCMB(rs)
@@ -266,14 +285,17 @@ def Gam_ff(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
     n_D = phys.rho_DM/m_D * rs**3
     g_ff = 1.33
     zeta_3 = 1.20206
-    denom = (3/2 * T_DM * n_D * (1+x_be))
+    if thermalized_be_bH:
+        denom = (3/2 * T_DM * n_D * (1+x_be))
+    else:
+        denom = (3/2 * T_DM * n_D * (2*x_be))
 
     pre = 16 * alphaD**3 * g_ff * x_be**2 * n_D**2 / (3*mu_D)**(3/2)
     prnth = np.pi**2 * (1+2*eps)/6 - zeta_3*eps
     convert = (phys.hbar * phys.c)**3/phys.hbar
     return pre * np.sqrt(2*np.pi*T_DM) * prnth / denom * convert
 
-def Gam_R(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
+def Gam_R(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, thermalized_be_bH=True):
     """ Rayleigh energy exchange rate / T_DM in 1/s """
     B_D = get_BD(alphaD, m_be, m_bp)
     T_D = xi * phys.TCMB(rs)
@@ -281,101 +303,126 @@ def Gam_R(x_be, T_DM, rs, alphaD, m_be, m_bp, xi):
     n_D  = phys.rho_DM/m_D * rs**3
     zeta_9 = 1.00201
     ratio = T_D/T_DM
-    denom = (3/2 * (1+x_be))
+    if thermalized_be_bH:
+        denom = (3/2 * (1+x_be))
+    else:
+        denom = (3/2 * (1-x_be))
 
     pre  = 430080 * zeta_9 * alphaD**2 * (1-x_be) / np.pi**2
     temps = (T_D/B_D)**4 * (T_D/m_be)**2 * T_D/m_D * T_D/phys.hbar
     return pre * temps / denom #ratio * convert
 
-#!!! Make this correct
-def DM_IGM_cooling_rate(m_be, m_bp, T_matter, T_DM, V_pec, xHII, rs, fDM, particle_type, eps=0):
+
+def bH_ion_heat_exchange(m_be, m_bp, alphaD, T_bH, T_ion, x_be, rs):
+    x_bH = 1-x_be
+    m_tot = m_be+m_bp
+    B_D = get_BD(alphaD, m_be, m_bp)
+    rho_DM  = phys.rho_DM * rs**3
+
+    m =   {'bH': m_tot, 'be': m_be,  'bp': m_bp}
+    T =   {'bH': T_bH,     'be': T_ion, 'bp': T_ion}
+    x =   {'bH': x_bH,    'be': x_be, 'bp': x_be}
+    rho = {'bH': rho_DM*x_bH, 'be': rho_DM*x_be*m_be/m_tot, 'bp': rho_DM*x_be*m_bp/m_tot}
+    n =   {'bH': rho_DM*x_bH/m_tot, 'be': rho_DM*x_be/m_tot, 'bp': rho_DM*x_be/m_tot}
+
+    # be-bH, bp-bH,
+    parts = ['be', 'bp']
+    m_sum = {key: m[key] + m['bH'] for key in parts}
+    mu    = {key: m[key]*m['bH']/m_sum[key] for key in parts}
+    u_th  = {key: np.sqrt(T[key]/m[key] + T['bH']/m['bH']) for key in parts}
+
+
+    #cross-section, see Cyr-Racine Eqn.29
+    sigma0 = 320*alphaD**2/B_D**2 * (phys.hbar*phys.c)**2
+
+    dotT_ion   = 0
+    dotT_bH = 0
+    for p1 in parts:
+        pre  = 8*np.sqrt(2/np.pi) * rho[p1]*rho['bH']/m_sum[p1]**2 * sigma0 * u_th[p1]
+
+        #if x_be > 0:
+        dotT_ion += 2/(3*n[p1])   * pre * phys.c
+        dotT_bH  += 2/(3*n['bH']) * pre * phys.c
+
+    return dotT_ion, dotT_bH
+
+
+def DM_b_heat_exchange(m_be, m_bp, Tb, T_DM, V_pec, xHII, x_be, rs, eps=0, thermalized_be_bH=True):
     #See 1509.00029
     if eps == 0:
-        return 0
+        return 0, 0
 
-    #!!!
-    mDM = min(m_be,m_bp)
+    rho_DM = phys.rho_DM * rs**3
+    nH = phys.nH * rs**3
+    nDM = rho_DM/(m_be + m_bp)
+    # since n_DM*m_be + n_DM * m_bp = rho_DM
 
-    mu_p = mDM*1.22*phys.mp/(mDM + 1.22*phys.mp)
+    parts = ['e', 'p', 'be', 'bp']
+    m = {'e': phys.me, 'p': phys.mp, 'be': m_be, 'bp': m_bp}
+    T = {'e': Tb, 'p': Tb, 'be': T_DM, 'bp': T_DM}
+    x = {'e': xHII, 'p': xHII, 'be': x_be, 'bp': x_be}
+    n = {'e': xHII*nH, 'p': xHII*nH, 'be': x_be*nDM, 'bp': x_be*nDM}
+    rho = {part: n[part]*m[part] for part in parts}
 
-    #u_th and r defined just after eqn. 13.
-    u_th_p = np.sqrt(T_matter/phys.mp + T_DM/mDM)
-    r_p = V_pec/u_th_p
-    #Eqn. 14
-    F_p = erf(r_p/np.sqrt(2)) - np.sqrt(2/np.pi)*r_p*np.exp(-r_p**2/2)
-    #print(u_th_p, " ", r_p, " ", F_p)
-
-    #Put (13) into (16) into (18) || (19), then put this into rate_x to see that they indeed match
-    drag_cooling_term_p  = np.divide(mDM*F_p, r_p, out=np.zeros_like(F_p), where=r_p!=0)
-    drag_cooling_term_DM_p = np.divide(phys.mp*F_p, r_p, out=np.zeros_like(F_p), where=r_p!=0)
-    #print(drag_cooling_term_p, " ", drag_cooling_term_DM_p)
-
-    #Everything's doubled, one for protons, one for electrons
-    u_th_e = np.sqrt(T_matter/phys.me + T_DM/mDM)
-    r_e = V_pec/u_th_e
-    F_e = erf(r_e/np.sqrt(2)) - np.sqrt(2/np.pi)*r_e*np.exp(-r_e**2/2)
-
-    drag_cooling_term_e  = np.divide(mDM*F_e, r_e, out=np.zeros_like(F_e), where=r_e!=0)
-    drag_cooling_term_DM_e = np.divide(phys.me*F_e, r_e, out=np.zeros_like(F_e), where=r_e!=0)
-
-    #Eqn 2, Munoz and Loeb
-    xi = np.log(9*T_matter**3/(4*phys.hbar**3*phys.c**3*np.pi*eps**2*phys.alpha**3*xHII*phys.nH*rs**3))
-
-    mu_p = mDM*phys.mp/(mDM + phys.mp)
-    mu_e = mDM*phys.me/(mDM + phys.me)
-
-    xsec_0_p = 2*np.pi*phys.alpha**2*eps**2*xi/mu_p**2*phys.hbar**2*phys.c**2
-    xsec_0_e = 2*np.pi*phys.alpha**2*eps**2*xi/mu_e**2*phys.hbar**2*phys.c**2
-
-    if particle_type == 'matter':
-        rate_p = 2/(3*(1 + phys.nHe/phys.nH + xHII))*(fDM*phys.rho_DM*rs**3*phys.mp*xHII)/(mDM + phys.mp)**2*(
-                (xsec_0_p/u_th_p)*(
-                    np.sqrt(2/np.pi)*np.exp(-r_p**2/2)*(T_DM - T_matter)/u_th_p**2 + drag_cooling_term_p
-                )
-            )*phys.c
-
-        rate_e = 2/(3*(1 + phys.nHe/phys.nH + xHII))*(fDM*phys.rho_DM*rs**3*phys.me*xHII)/(mDM + phys.me)**2*(
-                (xsec_0_e/u_th_e)*(
-                    np.sqrt(2/np.pi)*np.exp(-r_e**2/2)*(T_DM - T_matter)/u_th_e**2 + drag_cooling_term_e
-                )
-            )*phys.c
-    elif particle_type == 'DM':
-        rate_p = 2/3*(m_bp*phys.mp*xHII*phys.nH*rs**3)/(m_bp + phys.mp)**2*(
-            (xsec_0_p/u_th_p)*(
-                np.sqrt(2/np.pi)*np.exp(-r_p**2/2)*(T_matter - T_DM)/u_th_p**2 + drag_cooling_term_DM_p
-            )
-        )*phys.c
-
-        rate_p += 2/3*(m_be*phys.mp*xHII*phys.nH*rs**3)/(m_be + phys.mp)**2*(
-            (xsec_0_p/u_th_p)*(
-                np.sqrt(2/np.pi)*np.exp(-r_p**2/2)*(T_matter - T_DM)/u_th_p**2 + drag_cooling_term_DM_p
-            )
-        )*phys.c
-
-        rate_e = 2/3*(m_bp*phys.me*xHII*phys.nH*rs**3)/(m_bp + phys.me)**2*(
-            (xsec_0_e/u_th_e)*(
-                np.sqrt(2/np.pi)*np.exp(-r_e**2/2)*(T_matter - T_DM)/u_th_e**2 + drag_cooling_term_DM_e
-            )
-        )*phys.c
-
-        rate_e += 2/3*(m_be*phys.me*xHII*phys.nH*rs**3)/(m_be + phys.me)**2*(
-            (xsec_0_e/u_th_e)*(
-                np.sqrt(2/np.pi)*np.exp(-r_e**2/2)*(T_matter - T_DM)/u_th_e**2 + drag_cooling_term_DM_e
-            )
-        )*phys.c
+    # heat capacities
+    CV_m = 3/2 * (1+phys.chi+xHII)*nH
+    if thermalized_be_bH:
+        # Only ions contribute
+        CV_DM = 3/2 * (1+x_be)*nDM
     else:
-        raise TypeError('Invalid particle_type.')
+        # All dark particles contribute
+        CV_DM = 3/2 * (2*x_be)*nDM
 
-    return rate_p + rate_e
+    CV = {'e': CV_m, 'p': CV_m, 'be': CV_DM, 'bp': CV_DM}
+
+    # e-be, e-bp, p-be, p-bp
+    pairs = ['ebe', 'ebp', 'pbe', 'pbp']
+    m_sum = {key: m[key[0]] + m[key[1:]] for key in pairs}
+    mu    = {key: m[key[0]]*m[key[1:]]/m_sum[key] for key in pairs}
+    u_th  = {key: np.sqrt(T[key[0]]/m[key[0]] + T[key[1:]]/m[key[1:]]) for key in pairs}
+    r     = {key: 0 for key in pairs}
+
+    #Coulomb Log: Eqn 2 of Munoz and Loeb
+    const = -np.log(4*np.pi*eps**2*phys.alpha**3/9) - 3*np.log(phys.hbar*phys.c)
+    logL_DM  = {key: const + np.log(np.divide(T[key[0]]**3, n[key[0]])) for key in pairs}
+    logL_b = {key: const + np.log(T[key[1:]]**3 / n[key[1:]]) for key in pairs}
+
+    #cross-section prefactor without the Coulomb log
+    prefac = 2*np.pi*phys.alpha**2*eps**2 * (phys.hbar*phys.c)**2
+    xsec_0 = {key: prefac/mu[key]**2 for key in pairs}
+
+    dotTb   = 0
+    dotT_DM = 0
+    for key in pairs:
+        p1 = key[0]  # e  or p
+        p2 = key[1:] # be or bp
+
+        pre  = rho[p1]*rho[p2]/m_sum[key]**2 * xsec_0[key]/u_th[key]
+        term = np.sqrt(2/np.pi)*np.exp(r[key]**2/2)/u_th[key]**2
+
+        #F(r)/r
+        if r[key] <= 1e-3:
+            #Taylor Expansion
+            F_r = 1/3*np.sqrt(2/np.pi) * r[key]**2 - r[key]**4/(5*np.sqrt(2*np.pi))
+        else:
+            F_r = erf(r[key]/np.sqrt(2))/r[key] - np.sqrt(2/np.pi)*np.exp(-r[key]**2/2)
+
+        if x_be > 0:
+            dotTb   += 1/CV[p1] * pre*logL_b[key]  * term*phys.c  #+ m[p2]*F_r)
+        if xHII > 0:
+            dotT_DM += 1/CV[p2] * pre*logL_DM[key] * term*phys.c  #+ m[p1]*F_r)
+
+    return dotTb, dotT_DM
 
 
 def get_history(
     rs_vec, init_cond=None, 
     alphaD=phys.alpha, m_be=phys.me, m_bp=phys.mp, xi=1,
     both_sectors = False, eps = 0,
-    mxstep = 1000, rtol=1e-4
+    mxstep = 1000, rtol=1e-4,
+    hack = True, thermalized_be_bH=True
 ):
-    """Returns the ionization and thermal history of the IGM.
+    """Returns the ionization and thermal history of the IGM and DM.
 
     Parameters
     ----------
@@ -387,6 +434,9 @@ def get_history(
         The maximum number of steps allowed for each integration point. See *scipy.integrate.odeint* for more information.
     rtol : float, optional
         The relative error of the solution. See *scipy.integrate.odeint* for more information.
+    thermalized_be_bH : bool, optional
+        True if we should assume the dark atoms are thermalized with the dark ions, 
+        False if we should keep track of T_bH and T_be=T_bp separately.
 
     Returns
     -------
@@ -401,25 +451,42 @@ def get_history(
     B_D   = get_BD(alphaD, m_be, m_bp)
     m_D   = m_be + m_bp - B_D
     Lya_D = 3/4 * B_D
+    fudge = 1
 
     # Define conversion functions between x and y. 
     def get_x(y):
             return 0.5 + 0.5*np.tanh(y)
 
-    def tla_before_reion(rs, var):
+    def tla(rs, var):
         # Returns an array of values for [dT_DM/dz, dy_be/dz].
         # var = [T_DM, x_be]
         #rs = np.exp(logrs)
 
+        nH = phys.nH*rs**3
         n_D  = phys.rho_DM/m_D * rs**3
         #n_D = phys.nH * rs**3 #To match the SM result
         T_D  = phys.TCMB(rs)*xi
-        def dlogTDM_dz(log_TDM, y_be, log_Tb, yHII, rs):
-            #rs = np.exp(logrs)
 
-            T_DM = np.exp(log_TDM)
-            x_be = get_x(y_be)
-            eps = 1-T_DM/T_D
+        log_TDM, y_be, log_Tb, yHII = var[0], var[1], var[2], var[3]
+        T_DM, Tb   = np.exp(log_TDM), np.exp(log_Tb)
+
+        x_be, xHII = get_x(y_be), get_x(yHII)
+        V_pec = 0
+        baryon, DM_rate = DM_b_heat_exchange(
+                m_be, m_bp, Tb, T_DM, V_pec, xHII, x_be, rs, 
+                eps=eps, thermalized_be_bH=thermalized_be_bH
+        )
+
+        ## Note: when neutrals and ions aren't thermalized, take T_DM to be the ion temperature
+        if not thermalized_be_bH:
+            log_T_bH = var[4]
+            T_bH = np.exp(log_T_bH)
+            ion_rate, H_rate = bH_ion_heat_exchange(m_be, m_bp, alphaD, T_bH, T_DM, x_be, rs)
+        #else:
+        #    T_bH = T_DM
+
+        def dlogTDM_dz(rs):
+            eps2 = 1-T_DM/T_D
 
             # Cooling rate due to adiabatic expansion
             adia  = 2/rs
@@ -430,36 +497,54 @@ def get_history(
             ) * (T_D/T_DM - 1.)
 
             #Rayleigh
-            Rayl  = phys.dtdz(rs) * Gam_R(
-                    x_be, T_DM, rs, alphaD, m_be, m_bp, xi) * (T_D/T_DM-1)
+            if thermalized_be_bH:
+                Rayl  = phys.dtdz(rs) * Gam_R(
+                        x_be, T_DM, rs, alphaD, m_be, m_bp, xi) * (T_D/T_DM-1)
+                recomb = -phys.dtdz(rs) * Gam_pr(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, 
+                        thermalized_be_bH=thermalized_be_bH)
+            else:
+                Rayl, recomb  = 0, 0
 
             #brem heating + ion heating - recomb cooling
             ff_pi_pr = phys.dtdz(rs) * (
-                    Gam_ff(x_be, T_DM, rs, alphaD, m_be, m_bp, xi) * eps
-                    + Gam_pi(x_be, T_DM, rs, alphaD, m_be, m_bp, xi)
-                    - Gam_pr(x_be, T_DM, rs, alphaD, m_be, m_bp, xi)
-                    -0
-                    )
-
-            deriv = Rayl + comp + adia + ff_pi_pr
-
-            #Baryon-DM energy exchange
-            V_pec = 0
-            fDM = 2 * x_be
-            xsec = None #DM baryon scattering cross-section
-            #baryon = phys.dtdz(rs) * DM_IGM_cooling_rate(
-            #    m_be, m_bp, phys.TCMB(rs), T_DM, V_pec, x_be, rs,
-            #    fDM, particle_type='DM', eps=eps
-            #)/(3/2 * n_D * (1 + x_be))
+                    Gam_ff(x_be, T_DM, rs, alphaD, m_be, m_bp, xi,
+                        thermalized_be_bH=thermalized_be_bH) * eps2
+                    + Gam_pi(x_be, T_DM, rs, alphaD, m_be, m_bp, xi, 
+                        thermalized_be_bH=thermalized_be_bH)
+                    ) + recomb
 
 
-            return deriv
+            # DM-baryon scattering
+            dlogTdz_DM_b = phys.dtdz(rs) * DM_rate * (Tb/T_DM-1)
+
+            # dark H dark ion scattering
+            if not thermalized_be_bH:
+                dlogTdz_ion_bH = phys.dtdz(rs) * ion_rate * (T_bH/T_DM-1)
+            else:
+                dlogTdz_ion_bH = 0
+
+            deriv = Rayl + comp + adia + ff_pi_pr + dlogTdz_DM_b + dlogTdz_ion_bH
+            return fudge*deriv
+
+        def dlogTbH_dz(rs):
+            # Cooling rate due to adiabatic expansion
+            adia  = 2/rs
+
+            #Rayleigh
+            Rayl  = phys.dtdz(rs) * Gam_R(
+                    x_be, T_DM, rs, alphaD, m_be, m_bp, xi) * (T_D/T_bH-1)
+            # recombination cooling
+            recomb = -phys.dtdz(rs) * Gam_pr(x_be, T_DM, rs, alphaD, m_be, m_bp, xi,
+                    thermalized_be_bH=thermalized_be_bH)
 
 
-        def dybe_dz(log_TDM, y_be, log_Tb, yHII, rs):
+            dlogTdz_bH_ion = phys.dtdz(rs) * H_rate * (T_DM/T_bH-1)
+            deriv = Rayl + recomb + adia + dlogTdz_bH_ion
+            return fudge*deriv
+
+
+        def dybe_dz(rs):
             #rs = np.exp(logrs)
-            T_DM = np.exp(log_TDM)
-            x_be = get_x(y_be)
             xD = 1 - x_be
 
             if x_be > 0.999 and rs > 2000:
@@ -471,36 +556,42 @@ def get_history(
             peeb_C = dark_peebles_C(x_be, rs, alphaD, m_be, m_bp, xi)
             alpha = dark_alpha_recomb(T_DM, alphaD, m_be, m_bp, xi)
             beta = dark_beta_ion(T_D, alphaD, m_be, m_bp, xi)
-            return 2 * np.cosh(y_be)**2 * phys.dtdz(rs) * (
+            return fudge*2 * np.cosh(y_be)**2 * phys.dtdz(rs) * (
                 - peeb_C * (alpha * x_be**2 * n_D 
                     - 4 * beta * xD * np.exp(-Lya_D/T_DM)
                     )
                 )
 
 
-        nH = phys.nH*rs**3
-        def dlogTb_dz(log_TDM, y_be, log_Tb, yHII, rs):
-            Tb = np.exp(log_Tb)
-            xHII = get_x(yHII)
+        def dlogTb_dz(rs):
             #if rs > 2e3:
             #    xHII = phys.xe_Saha(rs, 'HI')
             #elif rs<= 1:
             #    xHII = phys.xHII_std(1)
             #else:
             #    xHII = phys.xHII_std(rs)
+            hub_rate = phys.hubble(rs)
+            comp_rate = compton_cooling_rate(xHII, Tb, rs)
 
             adia = 2/rs
-            comp = phys.dtdz(rs) * compton_cooling_rate(xHII, Tb, rs) * (phys.TCMB(rs)/Tb - 1)
+            comp = phys.dtdz(rs) * comp_rate * (phys.TCMB(rs)/Tb - 1)
+            dlogTdz_b_DM = phys.dtdz(rs) * baryon * (T_DM/Tb-1)
 
-            #print(rs, compton_cooling_rate(xHII, Tb, rs)/phys.hubble(rs))
-            if compton_cooling_rate(xHII, Tb, rs)/phys.hubble(rs) > 1e5:
-                return phys.dtdz(rs) * (phys.TCMB(rs)/Tb - 1)*100
+            if hack:
+                ## The dominant term is compton scattering: couple to T_CMB
+                if comp_rate/(hub_rate + DM_rate) > 1e5:
+                    return phys.dtdz(rs) * (phys.TCMB(rs)/Tb - 1)*1e4
+
+                ### The dominant term is DM-baryon scattering: couple to T_DM
+                #elif DM_rate/(hub_rate + comp_rate) > 1e5:
+                #    return phys.dtdz(rs) * (T_DM/Tb - 1)*100
+
+                else:
+                    return adia + comp + dlogTdz_b_DM
             else:
-                return adia + comp
+                return adia + comp + fudge*dlogTdz_b_DM
 
-        def dyHII_dz(log_TDM, y_be, log_Tb, yHII, rs):
-            Tb = np.exp(log_Tb)
-            xHII = get_x(yHII)
+        def dyHII_dz(rs):
             ne = xHII * nH
             xHI = 1 - xHII
             T_CMB = phys.TCMB(rs)
@@ -515,22 +606,27 @@ def get_history(
             ion = 4*phys.beta_ion(T_CMB, 'HI') * np.exp(-phys.lya_eng/T_CMB)
 
 
-            if rs>1500:
-            #if ion/recomb > 1e2:
-                return phys.d_xe_Saha_dz(rs, 'HI')
+            if hack:
+                if rs>2e3:
+                #if ion/recomb > 1e2:
+                    return phys.d_xe_Saha_dz(rs, 'HI')
+                else:
+                    return 2 * np.cosh(yHII)**2 * phys.dtdz(rs) * (
+                        - phys.peebles_C(xHII, rs) * (recomb*xHII - ion*xHI)
+                        )
             else:
                 return 2 * np.cosh(yHII)**2 * phys.dtdz(rs) * (
                     - phys.peebles_C(xHII, rs) * (recomb*xHII - ion*xHI)
-                    )
+                )
 
-        log_TDM, y_be, log_Tb, yHII = var[0], var[1], var[2], var[3]
-
-        return np.array([
-            dlogTDM_dz(log_TDM, y_be, log_Tb, yHII, rs),
-            dybe_dz(log_TDM, y_be, log_Tb, yHII, rs),
-            dlogTb_dz(log_TDM, y_be, log_Tb, yHII, rs),
-            dyHII_dz(log_TDM, y_be, log_Tb, yHII, rs)
-        ])
+        if thermalized_be_bH:
+            return np.array([dlogTDM_dz(rs), dybe_dz(rs), 
+                dlogTb_dz(rs), dyHII_dz(rs)])
+        else:
+            #print(np.array([dlogTDM_dz(rs), dybe_dz(rs),
+            #    dlogTb_dz(rs), dyHII_dz(rs), dlogTbH_dz(rs)]))
+            return np.array([dlogTDM_dz(rs), dybe_dz(rs), 
+                dlogTb_dz(rs), dyHII_dz(rs), dlogTbH_dz(rs)])
 
 
     if init_cond is None:
@@ -543,6 +639,8 @@ def get_history(
             phys.TCMB(rs_start),
             phys.xe_Saha(rs_start, 'HI')
         ]
+        if not thermalized_be_bH:
+            _init_cond+=[xi*phys.TCMB(rs_start)]
 
     else:
 
@@ -557,11 +655,13 @@ def get_history(
     _init_cond[1] = np.arctanh(2*(_init_cond[1] - 0.5))
     _init_cond[2] = np.log(_init_cond[2])
     _init_cond[3] = np.arctanh(2*(_init_cond[3] - 0.5))
+    if not thermalized_be_bH:
+        _init_cond[4] = np.log(_init_cond[4])
     _init_cond = np.array(_init_cond)
 
     # Note: no reionization model implemented.
     soln = odeint(
-            tla_before_reion, _init_cond, rs_vec, 
+            tla, _init_cond, rs_vec, 
             mxstep = mxstep, tfirst=True, rtol=rtol
         )
     #soln = rk(
@@ -575,6 +675,8 @@ def get_history(
     soln[:,1] = 0.5 + 0.5*np.tanh(soln[:,1])
     soln[:,2] = np.exp(soln[:,2])
     soln[:,3] = 0.5 + 0.5*np.tanh(soln[:,3])
+    if not thermalized_be_bH:
+        soln[:,4] = np.exp(soln[:,4])
 
     return soln
 
